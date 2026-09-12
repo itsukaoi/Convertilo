@@ -14,53 +14,17 @@ import {
     CloudArrowUpIcon,
 } from "@heroicons/react/24/outline"
 
-
-import { FFmpeg } from "@ffmpeg/ffmpeg"
-import ffmpegWorkerURL from "@ffmpeg/ffmpeg/worker?url"
-import { fetchFile, toBlobURL } from "@ffmpeg/util"
-
 import { outputFormats, getMimeType } from "../constants/formats"
+import { convertFile } from "../services/ffmpegService"
 
 const HomePage = () => {
     const fileInputRef = useRef(null)
-    const ffmpegRef = useRef(new FFmpeg())
-    const ffmpegLoadedRef = useRef(false)
-    const ffmpegLoadPromiseRef = useRef(null)
+
 
     const [selectedFiles, setSelectedFiles] = useState([])
     const [errorMsg, setErrorMsg] = useState("")
     const [convertedFiles, setConvertedFiles] = useState([])
     const [loadingIndex, setLoadingIndex] = useState(null)
-
-    const loadFFmpeg = async () => {
-        if (ffmpegLoadedRef.current) return
-
-        if (!ffmpegLoadPromiseRef.current) {
-            ffmpegLoadPromiseRef.current = (async () => {
-                const ffmpeg = ffmpegRef.current
-                const baseURL = "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm"
-
-                const coreURL = await toBlobURL(`${baseURL}/ffmpeg-core.js`, "text/javascript")
-                const wasmURL = await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, "application/wasm")
-
-                await ffmpeg.load({
-                    coreURL,
-                    wasmURL,
-                    classWorkerURL: ffmpegWorkerURL
-                })
-
-                ffmpegLoadedRef.current = true
-            })()
-        }
-
-        try {
-            await ffmpegLoadPromiseRef.current
-        } catch (error) {
-            ffmpegLoadPromiseRef.current = null
-            ffmpegLoadedRef.current = false
-            throw error
-        }
-    }
 
     const handleFiles = (files) => {
         const allowedTypes = ["image/", "audio/", "video/"]
@@ -114,32 +78,17 @@ const HomePage = () => {
 
     const convertSingleFile = async (fileObj, index) => {
         const { file, outputFormat } = fileObj
-        const ffmpeg = ffmpegRef.current
-        const jobId = crypto.randomUUID()
-        const extension = file.name.includes(".") ? file.name.split(".").pop() : "input"
-        const inputName = `input-${jobId}.${extension}`
-        const outputName = `output-${jobId}.${outputFormat}`
 
         setLoadingIndex(index)
         setErrorMsg("")
 
         try {
-            await loadFFmpeg()
-            await ffmpeg.writeFile(inputName, await fetchFile(file))
+            const data = await convertFile(file, outputFormat)
 
-            const exitCode = await ffmpeg.exec(["-i", inputName, outputName])
+            const blob = new Blob([data], {
+                type: getMimeType(outputFormat)
+            })
 
-            if (exitCode !== 0) {
-                throw new Error(`FFmpeg terminó con código ${exitCode}`)
-            }
-
-            const data = await ffmpeg.readFile(outputName)
-
-            if (!(data instanceof Uint8Array)) {
-                throw new Error("FFmpeg devolvió un tipo de archivo inesperado")
-            }
-
-            const blob = new Blob([data], { type: getMimeType(outputFormat) })
             const url = URL.createObjectURL(blob)
             const baseName = file.name.replace(/\.[^/.]+$/, "")
             const downloadName = `${baseName}.${outputFormat}`
@@ -164,20 +113,6 @@ const HomePage = () => {
             console.error("Error al convertir archivo:", error)
             setErrorMsg(`No se pudo convertir "${file.name}". Intentá nuevamente.`)
         } finally {
-            if (ffmpegLoadedRef.current) {
-                try {
-                    await ffmpeg.deleteFile(inputName)
-                } catch {
-                    // El archivo puede no haberse creado.
-                }
-
-                try {
-                    await ffmpeg.deleteFile(outputName)
-                } catch {
-                    // El archivo puede no haberse creado.
-                }
-            }
-
             setLoadingIndex(null)
         }
     }
