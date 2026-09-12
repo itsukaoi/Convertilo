@@ -13,12 +13,33 @@ import {
     ArrowPathIcon,
     CloudArrowUpIcon,
 } from "@heroicons/react/24/outline"
-import { createFFmpeg, fetchFile } from "@ffmpeg/ffmpeg"
 
-const ffmpeg = createFFmpeg({
-    log: true,
-    corePath: "https://unpkg.com/@ffmpeg/core@0.11.0/dist/ffmpeg-core.js",
-})
+//ffmpeg imports
+import { FFmpeg } from "@ffmpeg/ffmpeg"
+import { fetchFile, toBlobURL } from "@ffmpeg/util"
+
+const ffmpeg = new FFmpeg()
+
+let ffmpegLoaded = false
+
+const loadFFmpeg = async () => {
+    if (ffmpegLoaded) return
+
+    const baseURL = "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/umd"
+
+    await ffmpeg.load({
+        coreURL: await toBlobURL(
+            `${baseURL}/ffmpeg-core.js`,
+            "text/javascript"
+        ),
+        wasmURL: await toBlobURL(
+            `${baseURL}/ffmpeg-core.wasm`,
+            "application/wasm"
+        ),
+    })
+    ffmpegLoaded = true
+
+}
 
 const outputFormats = {
     image: ["jpg", "jpeg", "png", "webp", "bmp", "ico", "tiff"],
@@ -44,7 +65,12 @@ const HomePage = () => {
             const isValid = allowedTypes.some((type) => file.type.startsWith(type))
             if (isValid) {
                 const typeGroup = file.type.split("/")[0]
-                validFiles.push({ file, typeGroup, outputFormat: outputFormats[typeGroup][0] })
+                validFiles.push({
+                    id: crypto.randomUUID(),
+                    file,
+                    typeGroup,
+                    outputFormat: outputFormats[typeGroup][0],
+                })
             } else {
                 invalidFiles.push(file.name)
             }
@@ -76,22 +102,83 @@ const HomePage = () => {
     }
 
     const convertSingleFile = async (fileObj, index) => {
-        const { file, outputFormat, typeGroup } = fileObj
+        const { file, outputFormat } = fileObj
+
         setLoadingIndex(index)
+        setErrorMsg("")
 
-        if (!ffmpeg.isLoaded()) await ffmpeg.load()
+        const inputName = `input-${Date.now()}-${file.name}`
+        const outputName = `output-${Date.now()}.${outputFormat}`
 
-        const inputName = file.name
-        const outputName = inputName.replace(/\.[^/.]+$/, `.${outputFormat}`)
+        try {
+            await loadFFmpeg()
 
-        ffmpeg.FS("writeFile", inputName, await fetchFile(file))
-        await ffmpeg.run("-i", inputName, outputName)
+            await ffmpeg.writeFile(
+                inputName,
+                await fetchFile(file)
+            )
 
-        const data = ffmpeg.FS("readFile", outputName)
-        const url = URL.createObjectURL(new Blob([data.buffer]))
+            const exitCode = await ffmpeg.exec([
+                "-i",
+                inputName,
+                outputName
+            ])
 
-        setConvertedFiles((prev) => [...prev, { name: outputName, url }])
-        setLoadingIndex(null)
+            if (exitCode !== 0) {
+                throw new Error(`FFmpeg terminó con código ${exitCode}`)
+            }
+
+            const data = await ffmpeg.readFile(outputName)
+            const blob = new Blob([data.buffer])
+            const url = URL.createObjectURL(blob)
+            const downloadName = file.name.replace(
+                /\.[^/.]+$/,
+                `.${outputFormat}`
+            )
+            setConvertedFiles((prev) => {
+                const previous = prev.find(
+                    (converted) => converted.sourceId === fileObj.id
+                )
+
+                if (previous) {
+                    URL.revokeObjectURL(previous.url)
+                }
+
+                return [
+                    ...prev.filter(
+                        (converted) => converted.sourceId !== fileObj.id
+                    ),
+                    {
+                        sourceId: fileObj.id,
+                        name: downloadName,
+                        url,
+                    },
+                ]
+            })
+
+        } catch (error) {
+            console.error("Error al convertir archivo:", error)
+
+            setErrorMsg(`No se pudo convertir "${file.name}". Intenta nuevamente.`)
+        }
+
+        finally {
+            try {
+                await ffmpeg.deleteFile(inputName)
+            }
+            catch {
+                //if the file wasn't created
+            }
+
+            try {
+                await ffmpeg.deleteFile(outputName)
+            }
+            catch {
+                //if the file wasn't created
+            }
+
+            setLoadingIndex(null)
+        }
     }
 
     const downloadAll = () => {
@@ -104,10 +191,34 @@ const HomePage = () => {
     }
 
     const deleteFile = (index) => {
-        setSelectedFiles((prev) => prev.filter((_, i) => i !== index))
+        const fileToDelete = selectedFiles[index]
+
+        if (!fileToDelete) return
+
+        setConvertedFiles((prev) => {
+            const converted = prev.find(
+                (file) => file.sourceId === fileToDelete.id
+            )
+
+            if (converted) {
+                URL.revokeObjectURL(converted.url)
+            }
+
+            return prev.filter(
+                (file) => file.sourceId !== fileToDelete.id
+            )
+        })
+
+        setSelectedFiles((prev) =>
+            prev.filter((_, i) => i !== index)
+        )
     }
 
     const clearAll = () => {
+        convertedFiles.forEach(({ url }) => {
+            URL.revokeObjectURL(url)
+        })
+
         setSelectedFiles([])
         setConvertedFiles([])
         setErrorMsg("")
@@ -180,11 +291,13 @@ const HomePage = () => {
                             {/* File List */}
                             <div className="grid gap-4 mb-8">
                                 {selectedFiles.map((f, idx) => {
-                                    const converted = convertedFiles.find((c) => c.name.startsWith(f.file.name.replace(/\.[^/.]+$/, "")))
+                                    const converted = convertedFiles.find(
+                                        (c) => c.sourceId === f.id
+                                    )
 
                                     return (
                                         <div
-                                            key={idx}
+                                            key={f.id}
                                             className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 hover:shadow-md transition-shadow duration-200"
                                         >
                                             <div className="flex flex-col sm:flex-row sm:items-center gap-4">
@@ -205,11 +318,28 @@ const HomePage = () => {
                                                         value={f.outputFormat}
                                                         onChange={(e) => {
                                                             const newFormat = e.target.value
+
                                                             setSelectedFiles((prev) =>
-                                                                prev.map((file, i) => (i === idx ? { ...file, outputFormat: newFormat } : file))
-                                                            );
-                                                            const inputName = f.file.name.replace(/\.[^/.]+$/, "");
-                                                            setConvertedFiles((prev) => prev.filter((conv) => !conv.name.startsWith(inputName)));
+                                                                prev.map((file, i) =>
+                                                                    i === idx
+                                                                        ? { ...file, outputFormat: newFormat }
+                                                                        : file
+                                                                )
+                                                            )
+
+                                                            setConvertedFiles((prev) => {
+                                                                const converted = prev.find(
+                                                                    (conv) => conv.sourceId === f.id
+                                                                )
+
+                                                                if (converted) {
+                                                                    URL.revokeObjectURL(converted.url)
+                                                                }
+
+                                                                return prev.filter(
+                                                                    (conv) => conv.sourceId !== f.id
+                                                                )
+                                                            })
                                                         }}
                                                     >
                                                         {outputFormats[f.typeGroup].map((fmt) => (
