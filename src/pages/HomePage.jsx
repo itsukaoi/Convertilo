@@ -13,33 +13,9 @@ import {
     ArrowPathIcon,
     CloudArrowUpIcon,
 } from "@heroicons/react/24/outline"
-
-//ffmpeg imports
 import { FFmpeg } from "@ffmpeg/ffmpeg"
+import ffmpegWorkerURL from "@ffmpeg/ffmpeg/worker?url"
 import { fetchFile, toBlobURL } from "@ffmpeg/util"
-
-const ffmpeg = new FFmpeg()
-
-let ffmpegLoaded = false
-
-const loadFFmpeg = async () => {
-    if (ffmpegLoaded) return
-
-    const baseURL = "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/umd"
-
-    await ffmpeg.load({
-        coreURL: await toBlobURL(
-            `${baseURL}/ffmpeg-core.js`,
-            "text/javascript"
-        ),
-        wasmURL: await toBlobURL(
-            `${baseURL}/ffmpeg-core.wasm`,
-            "application/wasm"
-        ),
-    })
-    ffmpegLoaded = true
-
-}
 
 const outputFormats = {
     image: ["jpg", "jpeg", "png", "webp", "bmp", "ico", "tiff"],
@@ -47,13 +23,74 @@ const outputFormats = {
     video: ["mp4", "webm", "avi", "mov", "mkv", "flv", "m4v"]
 }
 
+const getMimeType = (format) => {
+    const mimeTypes = {
+        jpg: "image/jpeg",
+        jpeg: "image/jpeg",
+        png: "image/png",
+        webp: "image/webp",
+        bmp: "image/bmp",
+        ico: "image/x-icon",
+        tiff: "image/tiff",
+        mp3: "audio/mpeg",
+        aac: "audio/aac",
+        flac: "audio/flac",
+        wav: "audio/wav",
+        ogg: "audio/ogg",
+        wma: "audio/x-ms-wma",
+        m4a: "audio/mp4",
+        mp4: "video/mp4",
+        webm: "video/webm",
+        avi: "video/x-msvideo",
+        mov: "video/quicktime",
+        mkv: "video/x-matroska",
+        flv: "video/x-flv",
+        m4v: "video/x-m4v"
+    }
+
+    return mimeTypes[format] || "application/octet-stream"
+}
 
 const HomePage = () => {
     const fileInputRef = useRef(null)
+    const ffmpegRef = useRef(new FFmpeg())
+    const ffmpegLoadedRef = useRef(false)
+    const ffmpegLoadPromiseRef = useRef(null)
+
     const [selectedFiles, setSelectedFiles] = useState([])
     const [errorMsg, setErrorMsg] = useState("")
     const [convertedFiles, setConvertedFiles] = useState([])
     const [loadingIndex, setLoadingIndex] = useState(null)
+
+    const loadFFmpeg = async () => {
+        if (ffmpegLoadedRef.current) return
+
+        if (!ffmpegLoadPromiseRef.current) {
+            ffmpegLoadPromiseRef.current = (async () => {
+                const ffmpeg = ffmpegRef.current
+                const baseURL = "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm"
+
+                const coreURL = await toBlobURL(`${baseURL}/ffmpeg-core.js`, "text/javascript")
+                const wasmURL = await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, "application/wasm")
+
+                await ffmpeg.load({
+                    coreURL,
+                    wasmURL,
+                    classWorkerURL: ffmpegWorkerURL
+                })
+
+                ffmpegLoadedRef.current = true
+            })()
+        }
+
+        try {
+            await ffmpegLoadPromiseRef.current
+        } catch (error) {
+            ffmpegLoadPromiseRef.current = null
+            ffmpegLoadedRef.current = false
+            throw error
+        }
+    }
 
     const handleFiles = (files) => {
         const allowedTypes = ["image/", "audio/", "video/"]
@@ -63,13 +100,14 @@ const HomePage = () => {
 
         newFiles.forEach((file) => {
             const isValid = allowedTypes.some((type) => file.type.startsWith(type))
+
             if (isValid) {
                 const typeGroup = file.type.split("/")[0]
                 validFiles.push({
                     id: crypto.randomUUID(),
                     file,
                     typeGroup,
-                    outputFormat: outputFormats[typeGroup][0],
+                    outputFormat: outputFormats[typeGroup][0]
                 })
             } else {
                 invalidFiles.push(file.name)
@@ -85,14 +123,17 @@ const HomePage = () => {
         setSelectedFiles((prev) => [...prev, ...validFiles])
     }
 
-    const handleChange = (e) => handleFiles(e.target.files)
+    const handleChange = (e) => {
+        handleFiles(e.target.files)
+        e.target.value = ""
+    }
 
     const handleDrop = (e) => {
         e.preventDefault()
         handleFiles(e.dataTransfer.files)
     }
 
-    const handleClick = () => fileInputRef.current.click()
+    const handleClick = () => fileInputRef.current?.click()
 
     const getIcon = (type) => {
         if (type === "image") return <PhotoIcon className="w-6 h-6 text-blue-500" />
@@ -103,78 +144,68 @@ const HomePage = () => {
 
     const convertSingleFile = async (fileObj, index) => {
         const { file, outputFormat } = fileObj
+        const ffmpeg = ffmpegRef.current
+        const jobId = crypto.randomUUID()
+        const extension = file.name.includes(".") ? file.name.split(".").pop() : "input"
+        const inputName = `input-${jobId}.${extension}`
+        const outputName = `output-${jobId}.${outputFormat}`
 
         setLoadingIndex(index)
         setErrorMsg("")
 
-        const inputName = `input-${Date.now()}-${file.name}`
-        const outputName = `output-${Date.now()}.${outputFormat}`
-
         try {
             await loadFFmpeg()
+            await ffmpeg.writeFile(inputName, await fetchFile(file))
 
-            await ffmpeg.writeFile(
-                inputName,
-                await fetchFile(file)
-            )
-
-            const exitCode = await ffmpeg.exec([
-                "-i",
-                inputName,
-                outputName
-            ])
+            const exitCode = await ffmpeg.exec(["-i", inputName, outputName])
 
             if (exitCode !== 0) {
                 throw new Error(`FFmpeg terminó con código ${exitCode}`)
             }
 
             const data = await ffmpeg.readFile(outputName)
-            const blob = new Blob([data.buffer])
+
+            if (!(data instanceof Uint8Array)) {
+                throw new Error("FFmpeg devolvió un tipo de archivo inesperado")
+            }
+
+            const blob = new Blob([data], { type: getMimeType(outputFormat) })
             const url = URL.createObjectURL(blob)
-            const downloadName = file.name.replace(
-                /\.[^/.]+$/,
-                `.${outputFormat}`
-            )
+            const baseName = file.name.replace(/\.[^/.]+$/, "")
+            const downloadName = `${baseName}.${outputFormat}`
+
             setConvertedFiles((prev) => {
-                const previous = prev.find(
-                    (converted) => converted.sourceId === fileObj.id
-                )
+                const previous = prev.find((converted) => converted.sourceId === fileObj.id)
 
                 if (previous) {
                     URL.revokeObjectURL(previous.url)
                 }
 
                 return [
-                    ...prev.filter(
-                        (converted) => converted.sourceId !== fileObj.id
-                    ),
+                    ...prev.filter((converted) => converted.sourceId !== fileObj.id),
                     {
                         sourceId: fileObj.id,
                         name: downloadName,
-                        url,
-                    },
+                        url
+                    }
                 ]
             })
-
         } catch (error) {
             console.error("Error al convertir archivo:", error)
+            setErrorMsg(`No se pudo convertir "${file.name}". Intentá nuevamente.`)
+        } finally {
+            if (ffmpegLoadedRef.current) {
+                try {
+                    await ffmpeg.deleteFile(inputName)
+                } catch {
+                    // El archivo puede no haberse creado.
+                }
 
-            setErrorMsg(`No se pudo convertir "${file.name}". Intenta nuevamente.`)
-        }
-
-        finally {
-            try {
-                await ffmpeg.deleteFile(inputName)
-            }
-            catch {
-                //if the file wasn't created
-            }
-
-            try {
-                await ffmpeg.deleteFile(outputName)
-            }
-            catch {
-                //if the file wasn't created
+                try {
+                    await ffmpeg.deleteFile(outputName)
+                } catch {
+                    // El archivo puede no haberse creado.
+                }
             }
 
             setLoadingIndex(null)
@@ -186,7 +217,9 @@ const HomePage = () => {
             const link = document.createElement("a")
             link.href = url
             link.download = name
+            document.body.appendChild(link)
             link.click()
+            link.remove()
         })
     }
 
@@ -196,22 +229,16 @@ const HomePage = () => {
         if (!fileToDelete) return
 
         setConvertedFiles((prev) => {
-            const converted = prev.find(
-                (file) => file.sourceId === fileToDelete.id
-            )
+            const converted = prev.find((file) => file.sourceId === fileToDelete.id)
 
             if (converted) {
                 URL.revokeObjectURL(converted.url)
             }
 
-            return prev.filter(
-                (file) => file.sourceId !== fileToDelete.id
-            )
+            return prev.filter((file) => file.sourceId !== fileToDelete.id)
         })
 
-        setSelectedFiles((prev) =>
-            prev.filter((_, i) => i !== index)
-        )
+        setSelectedFiles((prev) => prev.filter((_, i) => i !== index))
     }
 
     const clearAll = () => {
@@ -223,6 +250,26 @@ const HomePage = () => {
         setConvertedFiles([])
         setErrorMsg("")
         setLoadingIndex(null)
+
+        if (fileInputRef.current) {
+            fileInputRef.current.value = ""
+        }
+    }
+
+    const changeOutputFormat = (id, index, newFormat) => {
+        setSelectedFiles((prev) =>
+            prev.map((file, i) => i === index ? { ...file, outputFormat: newFormat } : file)
+        )
+
+        setConvertedFiles((prev) => {
+            const converted = prev.find((file) => file.sourceId === id)
+
+            if (converted) {
+                URL.revokeObjectURL(converted.url)
+            }
+
+            return prev.filter((file) => file.sourceId !== id)
+        })
     }
 
     return (
@@ -235,8 +282,7 @@ const HomePage = () => {
                             Conversor de Archivos <span className="bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent mb-4">Gratis</span> e <span className="bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent mb-4">Ilimitado</span>
                         </h1>
                         <p className="text-lg sm:text-xl text-gray-600 max-w-2xl mx-auto leading-relaxed">
-                            Convertí tus archivos multimedia de forma rápida y sencilla. Soporta imágenes, audio y video con
-                            conversión instantánea.
+                            Convertí tus archivos multimedia de forma rápida y sencilla. Soporta imágenes, audio y video con conversión instantánea.
                         </p>
                     </div>
 
@@ -291,9 +337,7 @@ const HomePage = () => {
                             {/* File List */}
                             <div className="grid gap-4 mb-8">
                                 {selectedFiles.map((f, idx) => {
-                                    const converted = convertedFiles.find(
-                                        (c) => c.sourceId === f.id
-                                    )
+                                    const converted = convertedFiles.find((c) => c.sourceId === f.id)
 
                                     return (
                                         <div
@@ -314,33 +358,10 @@ const HomePage = () => {
                                                 <div className="flex items-center gap-3 flex-wrap">
                                                     {/* Format Selector */}
                                                     <select
-                                                        className="text-sm border border-gray-300 rounded-lg px-3 py-2 bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                                        className="text-sm border border-gray-300 rounded-lg px-3 py-2 bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50"
                                                         value={f.outputFormat}
-                                                        onChange={(e) => {
-                                                            const newFormat = e.target.value
-
-                                                            setSelectedFiles((prev) =>
-                                                                prev.map((file, i) =>
-                                                                    i === idx
-                                                                        ? { ...file, outputFormat: newFormat }
-                                                                        : file
-                                                                )
-                                                            )
-
-                                                            setConvertedFiles((prev) => {
-                                                                const converted = prev.find(
-                                                                    (conv) => conv.sourceId === f.id
-                                                                )
-
-                                                                if (converted) {
-                                                                    URL.revokeObjectURL(converted.url)
-                                                                }
-
-                                                                return prev.filter(
-                                                                    (conv) => conv.sourceId !== f.id
-                                                                )
-                                                            })
-                                                        }}
+                                                        disabled={loadingIndex !== null}
+                                                        onChange={(e) => changeOutputFormat(f.id, idx, e.target.value)}
                                                     >
                                                         {outputFormats[f.typeGroup].map((fmt) => (
                                                             <option key={fmt} value={fmt}>
@@ -352,11 +373,11 @@ const HomePage = () => {
                                                     {/* Convert Button */}
                                                     <button
                                                         onClick={() => convertSingleFile(f, idx)}
-                                                        disabled={loadingIndex === idx}
+                                                        disabled={loadingIndex !== null}
                                                         className="inline-flex items-center gap-2 bg-gradient-to-r from-green-500 to-green-600 text-white px-4 py-2 rounded-lg hover:from-green-600 hover:to-green-700 focus:ring-2 focus:ring-green-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 text-sm font-medium"
                                                     >
-                                                        {loadingIndex === idx ? <ArrowPathIcon className="w-4 h-4 animate-spin" /> : null}
-                                                        Convertir
+                                                        {loadingIndex === idx && <ArrowPathIcon className="w-4 h-4 animate-spin" />}
+                                                        {loadingIndex === idx ? "Convirtiendo..." : "Convertir"}
                                                     </button>
 
                                                     {/* Download Link */}
@@ -374,7 +395,8 @@ const HomePage = () => {
                                                     {/* Delete Button */}
                                                     <button
                                                         onClick={() => deleteFile(idx)}
-                                                        className="p-2 text-gray-400 hover:text-red-500 transition-colors duration-200"
+                                                        disabled={loadingIndex !== null}
+                                                        className="p-2 text-gray-400 hover:text-red-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200"
                                                     >
                                                         <TrashIcon className="w-4 h-4" />
                                                     </button>
@@ -389,7 +411,8 @@ const HomePage = () => {
                             <div className="flex flex-col sm:flex-row gap-3 justify-center">
                                 <button
                                     onClick={handleClick}
-                                    className="inline-flex items-center justify-center gap-2 bg-gradient-to-r from-blue-500 to-blue-600 text-white px-6 py-3 rounded-lg hover:from-blue-600 hover:to-blue-700 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-all duration-200 font-medium"
+                                    disabled={loadingIndex !== null}
+                                    className="inline-flex items-center justify-center gap-2 bg-gradient-to-r from-blue-500 to-blue-600 text-white px-6 py-3 rounded-lg hover:from-blue-600 hover:to-blue-700 focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 font-medium"
                                 >
                                     <PlusCircleIcon className="w-5 h-5" />
                                     Agregar archivos
@@ -398,7 +421,8 @@ const HomePage = () => {
                                 {convertedFiles.length > 0 && (
                                     <button
                                         onClick={downloadAll}
-                                        className="inline-flex items-center justify-center gap-2 bg-gradient-to-r from-purple-500 to-purple-600 text-white px-6 py-3 rounded-lg hover:from-purple-600 hover:to-purple-700 focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 transition-all duration-200 font-medium"
+                                        disabled={loadingIndex !== null}
+                                        className="inline-flex items-center justify-center gap-2 bg-gradient-to-r from-purple-500 to-purple-600 text-white px-6 py-3 rounded-lg hover:from-purple-600 hover:to-purple-700 focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 font-medium"
                                     >
                                         <ArrowDownTrayIcon className="w-5 h-5" />
                                         Descargar todos
@@ -407,7 +431,8 @@ const HomePage = () => {
 
                                 <button
                                     onClick={clearAll}
-                                    className="inline-flex items-center justify-center gap-2 bg-gray-500 text-white px-6 py-3 rounded-lg hover:bg-gray-600 focus:ring-2 focus:ring-gray-500 focus:ring-offset-2 transition-all duration-200 font-medium"
+                                    disabled={loadingIndex !== null}
+                                    className="inline-flex items-center justify-center gap-2 bg-gray-500 text-white px-6 py-3 rounded-lg hover:bg-gray-600 focus:ring-2 focus:ring-gray-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 font-medium"
                                 >
                                     <TrashIcon className="w-5 h-5" />
                                     Limpiar lista
