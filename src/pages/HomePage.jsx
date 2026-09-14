@@ -1,6 +1,6 @@
 "use client"
 
-import { useRef, useState } from "react"
+import { useRef } from "react"
 import {
     PhotoIcon,
     MusicalNoteIcon,
@@ -14,57 +14,34 @@ import {
     CloudArrowUpIcon,
 } from "@heroicons/react/24/outline"
 
-import { outputFormats, getMimeType } from "../constants/formats"
-import { convertFile } from "../services/ffmpegService"
+import { outputFormats } from "../constants/formats"
+import { useFileConverter } from "../hooks/useFileConverter"
 
 const HomePage = () => {
     const fileInputRef = useRef(null)
 
+    const {
+        selectedFiles,
+        convertedFiles,
+        errorMsg,
+        loadingIndex,
+        addFiles,
+        convertSingleFile,
+        changeOutputFormat,
+        deleteFile,
+        clearAll,
+        downloadAll
+    } = useFileConverter()
 
-    const [selectedFiles, setSelectedFiles] = useState([])
-    const [errorMsg, setErrorMsg] = useState("")
-    const [convertedFiles, setConvertedFiles] = useState([])
-    const [loadingIndex, setLoadingIndex] = useState(null)
-
-    const handleFiles = (files) => {
-        const allowedTypes = ["image/", "audio/", "video/"]
-        const newFiles = Array.from(files)
-        const validFiles = []
-        const invalidFiles = []
-
-        newFiles.forEach((file) => {
-            const isValid = allowedTypes.some((type) => file.type.startsWith(type))
-
-            if (isValid) {
-                const typeGroup = file.type.split("/")[0]
-                validFiles.push({
-                    id: crypto.randomUUID(),
-                    file,
-                    typeGroup,
-                    outputFormat: outputFormats[typeGroup][0]
-                })
-            } else {
-                invalidFiles.push(file.name)
-            }
-        })
-
-        if (invalidFiles.length > 0) {
-            setErrorMsg(`Los siguientes archivos no son válidos: ${invalidFiles.join(", ")}`)
-        } else {
-            setErrorMsg("")
-        }
-
-        setSelectedFiles((prev) => [...prev, ...validFiles])
-    }
 
     const handleChange = (e) => {
-        handleFiles(e.target.files)
+        addFiles(e.target.files)
         e.target.value = ""
     }
 
     const handleDrop = (e) => {
         e.preventDefault()
-        handleFiles(e.dataTransfer.files)
+        addFiles(e.dataTransfer.files)
     }
 
     const handleClick = () => fileInputRef.current?.click()
@@ -74,107 +51,6 @@ const HomePage = () => {
         if (type === "audio") return <MusicalNoteIcon className="w-6 h-6 text-green-500" />
         if (type === "video") return <FilmIcon className="w-6 h-6 text-red-500" />
         return <DocumentIcon className="w-6 h-6 text-gray-500" />
-    }
-
-    const convertSingleFile = async (fileObj, index) => {
-        const { file, outputFormat } = fileObj
-
-        setLoadingIndex(index)
-        setErrorMsg("")
-
-        try {
-            const data = await convertFile(file, outputFormat)
-
-            const blob = new Blob([data], {
-                type: getMimeType(outputFormat)
-            })
-
-            const url = URL.createObjectURL(blob)
-            const baseName = file.name.replace(/\.[^/.]+$/, "")
-            const downloadName = `${baseName}.${outputFormat}`
-
-            setConvertedFiles((prev) => {
-                const previous = prev.find((converted) => converted.sourceId === fileObj.id)
-
-                if (previous) {
-                    URL.revokeObjectURL(previous.url)
-                }
-
-                return [
-                    ...prev.filter((converted) => converted.sourceId !== fileObj.id),
-                    {
-                        sourceId: fileObj.id,
-                        name: downloadName,
-                        url
-                    }
-                ]
-            })
-        } catch (error) {
-            console.error("Error al convertir archivo:", error)
-            setErrorMsg(`No se pudo convertir "${file.name}". Intentá nuevamente.`)
-        } finally {
-            setLoadingIndex(null)
-        }
-    }
-
-    const downloadAll = () => {
-        convertedFiles.forEach(({ name, url }) => {
-            const link = document.createElement("a")
-            link.href = url
-            link.download = name
-            document.body.appendChild(link)
-            link.click()
-            link.remove()
-        })
-    }
-
-    const deleteFile = (index) => {
-        const fileToDelete = selectedFiles[index]
-
-        if (!fileToDelete) return
-
-        setConvertedFiles((prev) => {
-            const converted = prev.find((file) => file.sourceId === fileToDelete.id)
-
-            if (converted) {
-                URL.revokeObjectURL(converted.url)
-            }
-
-            return prev.filter((file) => file.sourceId !== fileToDelete.id)
-        })
-
-        setSelectedFiles((prev) => prev.filter((_, i) => i !== index))
-    }
-
-    const clearAll = () => {
-        convertedFiles.forEach(({ url }) => {
-            URL.revokeObjectURL(url)
-        })
-
-        setSelectedFiles([])
-        setConvertedFiles([])
-        setErrorMsg("")
-        setLoadingIndex(null)
-
-        if (fileInputRef.current) {
-            fileInputRef.current.value = ""
-        }
-    }
-
-    const changeOutputFormat = (id, index, newFormat) => {
-        setSelectedFiles((prev) =>
-            prev.map((file, i) => i === index ? { ...file, outputFormat: newFormat } : file)
-        )
-
-        setConvertedFiles((prev) => {
-            const converted = prev.find((file) => file.sourceId === id)
-
-            if (converted) {
-                URL.revokeObjectURL(converted.url)
-            }
-
-            return prev.filter((file) => file.sourceId !== id)
-        })
     }
 
     return (
@@ -335,7 +211,13 @@ const HomePage = () => {
                                 )}
 
                                 <button
-                                    onClick={clearAll}
+                                    onClick={() => {
+                                        clearAll()
+
+                                        if (fileInputRef.current) {
+                                            fileInputRef.current.value = ""
+                                        }
+                                    }}
                                     disabled={loadingIndex !== null}
                                     className="inline-flex items-center justify-center gap-2 bg-gray-500 text-white px-6 py-3 rounded-lg hover:bg-gray-600 focus:ring-2 focus:ring-gray-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 font-medium"
                                 >
