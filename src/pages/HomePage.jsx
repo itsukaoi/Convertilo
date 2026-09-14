@@ -2,21 +2,16 @@
 
 import { useRef } from "react"
 import {
-    PhotoIcon,
-    MusicalNoteIcon,
-    FilmIcon,
-    DocumentIcon,
     PlusCircleIcon,
     ExclamationTriangleIcon,
     ArrowDownTrayIcon,
     TrashIcon,
-    ArrowPathIcon,
 } from "@heroicons/react/24/outline"
 
-import { outputFormats } from "../constants/formats"
 import { useFileConverter } from "../hooks/useFileConverter"
 
 import FileDropzone from "../components/converter/FileDropzone"
+import FileItem from "../components/converter/FileItem"
 
 const HomePage = () => {
     const fileInputRef = useRef(null)
@@ -41,13 +36,6 @@ const HomePage = () => {
     }
 
     const handleClick = () => fileInputRef.current?.click()
-
-    const getIcon = (type) => {
-        if (type === "image") return <PhotoIcon className="w-6 h-6 text-blue-500" />
-        if (type === "audio") return <MusicalNoteIcon className="w-6 h-6 text-green-500" />
-        if (type === "video") return <FilmIcon className="w-6 h-6 text-red-500" />
-        return <DocumentIcon className="w-6 h-6 text-gray-500" />
-    }
 
     return (
         <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 mt-12">
@@ -84,73 +72,22 @@ const HomePage = () => {
                         <div className="max-w-4xl mx-auto">
                             {/* File List */}
                             <div className="grid gap-4 mb-8">
-                                {selectedFiles.map((f, idx) => {
-                                    const converted = convertedFiles.find((c) => c.sourceId === f.id)
+                                {selectedFiles.map((fileObj, index) => {
+                                    const converted = convertedFiles.find(
+                                        (file) => file.sourceId === fileObj.id
+                                    )
 
                                     return (
-                                        <div
-                                            key={f.id}
-                                            className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 hover:shadow-md transition-shadow duration-200"
-                                        >
-                                            <div className="flex flex-col sm:flex-row sm:items-center gap-4">
-                                                {/* File Info */}
-                                                <div className="flex items-center gap-3 flex-1 min-w-0">
-                                                    <div className="flex-shrink-0">{getIcon(f.typeGroup)}</div>
-                                                    <div className="min-w-0 flex-1">
-                                                        <p className="text-sm font-medium text-gray-900 truncate">{f.file.name}</p>
-                                                        <p className="text-xs text-gray-500">{(f.file.size / 1024 / 1024).toFixed(2)} MB</p>
-                                                    </div>
-                                                </div>
-
-                                                {/* Controls */}
-                                                <div className="flex items-center gap-3 flex-wrap">
-                                                    {/* Format Selector */}
-                                                    <select
-                                                        className="text-sm border border-gray-300 rounded-lg px-3 py-2 bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50"
-                                                        value={f.outputFormat}
-                                                        disabled={loadingIndex !== null}
-                                                        onChange={(e) => changeOutputFormat(f.id, idx, e.target.value)}
-                                                    >
-                                                        {outputFormats[f.typeGroup].map((fmt) => (
-                                                            <option key={fmt} value={fmt}>
-                                                                .{fmt.toUpperCase()}
-                                                            </option>
-                                                        ))}
-                                                    </select>
-
-                                                    {/* Convert Button */}
-                                                    <button
-                                                        onClick={() => convertSingleFile(f, idx)}
-                                                        disabled={loadingIndex !== null}
-                                                        className="inline-flex items-center gap-2 bg-gradient-to-r from-green-500 to-green-600 text-white px-4 py-2 rounded-lg hover:from-green-600 hover:to-green-700 focus:ring-2 focus:ring-green-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 text-sm font-medium"
-                                                    >
-                                                        {loadingIndex === idx && <ArrowPathIcon className="w-4 h-4 animate-spin" />}
-                                                        {loadingIndex === idx ? "Convirtiendo..." : "Convertir"}
-                                                    </button>
-
-                                                    {/* Download Link */}
-                                                    {converted && (
-                                                        <a
-                                                            href={converted.url}
-                                                            download={converted.name}
-                                                            className="inline-flex items-center gap-2 text-blue-600 hover:text-blue-700 font-medium text-sm transition-colors duration-200"
-                                                        >
-                                                            <ArrowDownTrayIcon className="w-4 h-4" />
-                                                            Descargar
-                                                        </a>
-                                                    )}
-
-                                                    {/* Delete Button */}
-                                                    <button
-                                                        onClick={() => deleteFile(idx)}
-                                                        disabled={loadingIndex !== null}
-                                                        className="p-2 text-gray-400 hover:text-red-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200"
-                                                    >
-                                                        <TrashIcon className="w-4 h-4" />
-                                                    </button>
-                                                </div>
-                                            </div>
-                                        </div>
+                                        <FileItem
+                                            key={fileObj.id}
+                                            fileObj={fileObj}
+                                            index={index}
+                                            converted={converted}
+                                            loadingIndex={loadingIndex}
+                                            onConvert={convertSingleFile}
+                                            onDelete={deleteFile}
+                                            onFormatChange={changeOutputFormat}
+                                        />
                                     )
                                 })}
                             </div>
