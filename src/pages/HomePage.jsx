@@ -11,7 +11,8 @@ import {
 import { useFileConverter } from "../hooks/useFileConverter"
 
 import FileDropzone from "../components/converter/FileDropzone"
-import FileItem from "../components/converter/FileItem"
+
+import FileList from "../components/converter/FileList"
 
 const HomePage = () => {
     const fileInputRef = useRef(null)
@@ -71,26 +72,14 @@ const HomePage = () => {
                     ) : (
                         <div className="max-w-4xl mx-auto">
                             {/* File List */}
-                            <div className="grid gap-4 mb-8">
-                                {selectedFiles.map((fileObj, index) => {
-                                    const converted = convertedFiles.find(
-                                        (file) => file.sourceId === fileObj.id
-                                    )
-
-                                    return (
-                                        <FileItem
-                                            key={fileObj.id}
-                                            fileObj={fileObj}
-                                            index={index}
-                                            converted={converted}
-                                            loadingIndex={loadingIndex}
-                                            onConvert={convertSingleFile}
-                                            onDelete={deleteFile}
-                                            onFormatChange={changeOutputFormat}
-                                        />
-                                    )
-                                })}
-                            </div>
+                            <FileList
+                                files={selectedFiles}
+                                convertedFiles={convertedFiles}
+                                loadingIndex={loadingIndex}
+                                onConvert={convertSingleFile}
+                                onDelete={deleteFile}
+                                onFormatChange={changeOutputFormat}
+                            />
 
                             {/* Action Buttons */}
                             <div className="flex flex-col sm:flex-row gap-3 justify-center">
