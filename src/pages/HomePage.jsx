@@ -1,276 +1,42 @@
 "use client"
 
-import { useRef, useState } from "react"
+import { useRef } from "react"
 import {
-    PhotoIcon,
-    MusicalNoteIcon,
-    FilmIcon,
-    DocumentIcon,
     PlusCircleIcon,
     ExclamationTriangleIcon,
     ArrowDownTrayIcon,
     TrashIcon,
-    ArrowPathIcon,
-    CloudArrowUpIcon,
 } from "@heroicons/react/24/outline"
-import { FFmpeg } from "@ffmpeg/ffmpeg"
-import ffmpegWorkerURL from "@ffmpeg/ffmpeg/worker?url"
-import { fetchFile, toBlobURL } from "@ffmpeg/util"
 
-const outputFormats = {
-    image: ["jpg", "jpeg", "png", "webp", "bmp", "ico", "tiff"],
-    audio: ["mp3", "aac", "flac", "wav", "ogg", "wma", "m4a"],
-    video: ["mp4", "webm", "avi", "mov", "mkv", "flv", "m4v"]
-}
+import { useFileConverter } from "../hooks/useFileConverter"
 
-const getMimeType = (format) => {
-    const mimeTypes = {
-        jpg: "image/jpeg",
-        jpeg: "image/jpeg",
-        png: "image/png",
-        webp: "image/webp",
-        bmp: "image/bmp",
-        ico: "image/x-icon",
-        tiff: "image/tiff",
-        mp3: "audio/mpeg",
-        aac: "audio/aac",
-        flac: "audio/flac",
-        wav: "audio/wav",
-        ogg: "audio/ogg",
-        wma: "audio/x-ms-wma",
-        m4a: "audio/mp4",
-        mp4: "video/mp4",
-        webm: "video/webm",
-        avi: "video/x-msvideo",
-        mov: "video/quicktime",
-        mkv: "video/x-matroska",
-        flv: "video/x-flv",
-        m4v: "video/x-m4v"
-    }
+import FileDropzone from "../components/converter/FileDropzone"
 
-    return mimeTypes[format] || "application/octet-stream"
-}
+import FileList from "../components/converter/FileList"
 
 const HomePage = () => {
     const fileInputRef = useRef(null)
-    const ffmpegRef = useRef(new FFmpeg())
-    const ffmpegLoadedRef = useRef(false)
-    const ffmpegLoadPromiseRef = useRef(null)
 
-    const [selectedFiles, setSelectedFiles] = useState([])
-    const [errorMsg, setErrorMsg] = useState("")
-    const [convertedFiles, setConvertedFiles] = useState([])
-    const [loadingIndex, setLoadingIndex] = useState(null)
+    const {
+        selectedFiles,
+        convertedFiles,
+        errorMsg,
+        loadingIndex,
+        addFiles,
+        convertSingleFile,
+        changeOutputFormat,
+        deleteFile,
+        clearAll,
+        downloadAll
+    } = useFileConverter()
 
-    const loadFFmpeg = async () => {
-        if (ffmpegLoadedRef.current) return
-
-        if (!ffmpegLoadPromiseRef.current) {
-            ffmpegLoadPromiseRef.current = (async () => {
-                const ffmpeg = ffmpegRef.current
-                const baseURL = "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm"
-
-                const coreURL = await toBlobURL(`${baseURL}/ffmpeg-core.js`, "text/javascript")
-                const wasmURL = await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, "application/wasm")
-
-                await ffmpeg.load({
-                    coreURL,
-                    wasmURL,
-                    classWorkerURL: ffmpegWorkerURL
-                })
-
-                ffmpegLoadedRef.current = true
-            })()
-        }
-
-        try {
-            await ffmpegLoadPromiseRef.current
-        } catch (error) {
-            ffmpegLoadPromiseRef.current = null
-            ffmpegLoadedRef.current = false
-            throw error
-        }
-    }
-
-    const handleFiles = (files) => {
-        const allowedTypes = ["image/", "audio/", "video/"]
-        const newFiles = Array.from(files)
-        const validFiles = []
-        const invalidFiles = []
-
-        newFiles.forEach((file) => {
-            const isValid = allowedTypes.some((type) => file.type.startsWith(type))
-
-            if (isValid) {
-                const typeGroup = file.type.split("/")[0]
-                validFiles.push({
-                    id: crypto.randomUUID(),
-                    file,
-                    typeGroup,
-                    outputFormat: outputFormats[typeGroup][0]
-                })
-            } else {
-                invalidFiles.push(file.name)
-            }
-        })
-
-        if (invalidFiles.length > 0) {
-            setErrorMsg(`Los siguientes archivos no son válidos: ${invalidFiles.join(", ")}`)
-        } else {
-            setErrorMsg("")
-        }
-
-        setSelectedFiles((prev) => [...prev, ...validFiles])
-    }
 
     const handleChange = (e) => {
-        handleFiles(e.target.files)
+        addFiles(e.target.files)
         e.target.value = ""
     }
 
-    const handleDrop = (e) => {
-        e.preventDefault()
-        handleFiles(e.dataTransfer.files)
-    }
-
     const handleClick = () => fileInputRef.current?.click()
-
-    const getIcon = (type) => {
-        if (type === "image") return <PhotoIcon className="w-6 h-6 text-blue-500" />
-        if (type === "audio") return <MusicalNoteIcon className="w-6 h-6 text-green-500" />
-        if (type === "video") return <FilmIcon className="w-6 h-6 text-red-500" />
-        return <DocumentIcon className="w-6 h-6 text-gray-500" />
-    }
-
-    const convertSingleFile = async (fileObj, index) => {
-        const { file, outputFormat } = fileObj
-        const ffmpeg = ffmpegRef.current
-        const jobId = crypto.randomUUID()
-        const extension = file.name.includes(".") ? file.name.split(".").pop() : "input"
-        const inputName = `input-${jobId}.${extension}`
-        const outputName = `output-${jobId}.${outputFormat}`
-
-        setLoadingIndex(index)
-        setErrorMsg("")
-
-        try {
-            await loadFFmpeg()
-            await ffmpeg.writeFile(inputName, await fetchFile(file))
-
-            const exitCode = await ffmpeg.exec(["-i", inputName, outputName])
-
-            if (exitCode !== 0) {
-                throw new Error(`FFmpeg terminó con código ${exitCode}`)
-            }
-
-            const data = await ffmpeg.readFile(outputName)
-
-            if (!(data instanceof Uint8Array)) {
-                throw new Error("FFmpeg devolvió un tipo de archivo inesperado")
-            }
-
-            const blob = new Blob([data], { type: getMimeType(outputFormat) })
-            const url = URL.createObjectURL(blob)
-            const baseName = file.name.replace(/\.[^/.]+$/, "")
-            const downloadName = `${baseName}.${outputFormat}`
-
-            setConvertedFiles((prev) => {
-                const previous = prev.find((converted) => converted.sourceId === fileObj.id)
-
-                if (previous) {
-                    URL.revokeObjectURL(previous.url)
-                }
-
-                return [
-                    ...prev.filter((converted) => converted.sourceId !== fileObj.id),
-                    {
-                        sourceId: fileObj.id,
-                        name: downloadName,
-                        url
-                    }
-                ]
-            })
-        } catch (error) {
-            console.error("Error al convertir archivo:", error)
-            setErrorMsg(`No se pudo convertir "${file.name}". Intentá nuevamente.`)
-        } finally {
-            if (ffmpegLoadedRef.current) {
-                try {
-                    await ffmpeg.deleteFile(inputName)
-                } catch {
-                    // El archivo puede no haberse creado.
-                }
-
-                try {
-                    await ffmpeg.deleteFile(outputName)
-                } catch {
-                    // El archivo puede no haberse creado.
-                }
-            }
-
-            setLoadingIndex(null)
-        }
-    }
-
-    const downloadAll = () => {
-        convertedFiles.forEach(({ name, url }) => {
-            const link = document.createElement("a")
-            link.href = url
-            link.download = name
-            document.body.appendChild(link)
-            link.click()
-            link.remove()
-        })
-    }
-
-    const deleteFile = (index) => {
-        const fileToDelete = selectedFiles[index]
-
-        if (!fileToDelete) return
-
-        setConvertedFiles((prev) => {
-            const converted = prev.find((file) => file.sourceId === fileToDelete.id)
-
-            if (converted) {
-                URL.revokeObjectURL(converted.url)
-            }
-
-            return prev.filter((file) => file.sourceId !== fileToDelete.id)
-        })
-
-        setSelectedFiles((prev) => prev.filter((_, i) => i !== index))
-    }
-
-    const clearAll = () => {
-        convertedFiles.forEach(({ url }) => {
-            URL.revokeObjectURL(url)
-        })
-
-        setSelectedFiles([])
-        setConvertedFiles([])
-        setErrorMsg("")
-        setLoadingIndex(null)
-
-        if (fileInputRef.current) {
-            fileInputRef.current.value = ""
-        }
-    }
-
-    const changeOutputFormat = (id, index, newFormat) => {
-        setSelectedFiles((prev) =>
-            prev.map((file, i) => i === index ? { ...file, outputFormat: newFormat } : file)
-        )
-
-        setConvertedFiles((prev) => {
-            const converted = prev.find((file) => file.sourceId === id)
-
-            if (converted) {
-                URL.revokeObjectURL(converted.url)
-            }
-
-            return prev.filter((file) => file.sourceId !== id)
-        })
-    }
 
     return (
         <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 mt-12">
@@ -298,114 +64,22 @@ const HomePage = () => {
 
                     {/* Upload Area or File List */}
                     {selectedFiles.length === 0 ? (
-                        <div className="max-w-2xl mx-auto">
-                            <div
-                                className="relative border-2 border-dashed border-blue-300 rounded-2xl p-8 sm:p-12 bg-white/70 backdrop-blur-sm hover:bg-blue-50/70 cursor-pointer transition-all duration-300 hover:border-blue-400 hover:shadow-lg group"
-                                onDrop={handleDrop}
-                                onDragOver={(e) => e.preventDefault()}
-                                onClick={handleClick}
-                            >
-                                <input type="file" multiple ref={fileInputRef} className="hidden" onChange={handleChange} />
-
-                                <div className="text-center">
-                                    <div className="inline-flex items-center justify-center w-20 h-20 bg-gradient-to-r from-blue-500 to-purple-600 rounded-full mb-6 group-hover:scale-110 transition-transform duration-300">
-                                        <CloudArrowUpIcon className="w-10 h-10 text-white" />
-                                    </div>
-
-                                    <h3 className="text-xl sm:text-2xl font-semibold text-gray-800 mb-2">Arrastra tus archivos aquí</h3>
-                                    <p className="text-gray-600 mb-6">o haz clic para seleccionar archivos</p>
-
-                                    <div className="flex flex-wrap justify-center gap-4 text-sm text-gray-500">
-                                        <div className="flex items-center gap-2">
-                                            <PhotoIcon className="w-4 h-4 text-blue-500" />
-                                            <span>Imágenes</span>
-                                        </div>
-                                        <div className="flex items-center gap-2">
-                                            <MusicalNoteIcon className="w-4 h-4 text-green-500" />
-                                            <span>Audio</span>
-                                        </div>
-                                        <div className="flex items-center gap-2">
-                                            <FilmIcon className="w-4 h-4 text-red-500" />
-                                            <span>Video</span>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
+                        <FileDropzone
+                            inputRef={fileInputRef}
+                            onFilesSelected={addFiles}
+                            disabled={loadingIndex !== null}
+                        />
                     ) : (
                         <div className="max-w-4xl mx-auto">
                             {/* File List */}
-                            <div className="grid gap-4 mb-8">
-                                {selectedFiles.map((f, idx) => {
-                                    const converted = convertedFiles.find((c) => c.sourceId === f.id)
-
-                                    return (
-                                        <div
-                                            key={f.id}
-                                            className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 hover:shadow-md transition-shadow duration-200"
-                                        >
-                                            <div className="flex flex-col sm:flex-row sm:items-center gap-4">
-                                                {/* File Info */}
-                                                <div className="flex items-center gap-3 flex-1 min-w-0">
-                                                    <div className="flex-shrink-0">{getIcon(f.typeGroup)}</div>
-                                                    <div className="min-w-0 flex-1">
-                                                        <p className="text-sm font-medium text-gray-900 truncate">{f.file.name}</p>
-                                                        <p className="text-xs text-gray-500">{(f.file.size / 1024 / 1024).toFixed(2)} MB</p>
-                                                    </div>
-                                                </div>
-
-                                                {/* Controls */}
-                                                <div className="flex items-center gap-3 flex-wrap">
-                                                    {/* Format Selector */}
-                                                    <select
-                                                        className="text-sm border border-gray-300 rounded-lg px-3 py-2 bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:opacity-50"
-                                                        value={f.outputFormat}
-                                                        disabled={loadingIndex !== null}
-                                                        onChange={(e) => changeOutputFormat(f.id, idx, e.target.value)}
-                                                    >
-                                                        {outputFormats[f.typeGroup].map((fmt) => (
-                                                            <option key={fmt} value={fmt}>
-                                                                .{fmt.toUpperCase()}
-                                                            </option>
-                                                        ))}
-                                                    </select>
-
-                                                    {/* Convert Button */}
-                                                    <button
-                                                        onClick={() => convertSingleFile(f, idx)}
-                                                        disabled={loadingIndex !== null}
-                                                        className="inline-flex items-center gap-2 bg-gradient-to-r from-green-500 to-green-600 text-white px-4 py-2 rounded-lg hover:from-green-600 hover:to-green-700 focus:ring-2 focus:ring-green-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 text-sm font-medium"
-                                                    >
-                                                        {loadingIndex === idx && <ArrowPathIcon className="w-4 h-4 animate-spin" />}
-                                                        {loadingIndex === idx ? "Convirtiendo..." : "Convertir"}
-                                                    </button>
-
-                                                    {/* Download Link */}
-                                                    {converted && (
-                                                        <a
-                                                            href={converted.url}
-                                                            download={converted.name}
-                                                            className="inline-flex items-center gap-2 text-blue-600 hover:text-blue-700 font-medium text-sm transition-colors duration-200"
-                                                        >
-                                                            <ArrowDownTrayIcon className="w-4 h-4" />
-                                                            Descargar
-                                                        </a>
-                                                    )}
-
-                                                    {/* Delete Button */}
-                                                    <button
-                                                        onClick={() => deleteFile(idx)}
-                                                        disabled={loadingIndex !== null}
-                                                        className="p-2 text-gray-400 hover:text-red-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200"
-                                                    >
-                                                        <TrashIcon className="w-4 h-4" />
-                                                    </button>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    )
-                                })}
-                            </div>
+                            <FileList
+                                files={selectedFiles}
+                                convertedFiles={convertedFiles}
+                                loadingIndex={loadingIndex}
+                                onConvert={convertSingleFile}
+                                onDelete={deleteFile}
+                                onFormatChange={changeOutputFormat}
+                            />
 
                             {/* Action Buttons */}
                             <div className="flex flex-col sm:flex-row gap-3 justify-center">
@@ -430,7 +104,13 @@ const HomePage = () => {
                                 )}
 
                                 <button
-                                    onClick={clearAll}
+                                    onClick={() => {
+                                        clearAll()
+
+                                        if (fileInputRef.current) {
+                                            fileInputRef.current.value = ""
+                                        }
+                                    }}
                                     disabled={loadingIndex !== null}
                                     className="inline-flex items-center justify-center gap-2 bg-gray-500 text-white px-6 py-3 rounded-lg hover:bg-gray-600 focus:ring-2 focus:ring-gray-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 font-medium"
                                 >
