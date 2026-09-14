@@ -1,5 +1,5 @@
 import { FFmpeg } from "@ffmpeg/ffmpeg"
-import ffmpegWorkerURL from "@ffmpeg/ffmpeg/worker?url"
+import ffmpegWorkerURL from "@ffmpeg/ffmpeg/worker?worker&url"
 import { fetchFile, toBlobURL } from "@ffmpeg/util"
 
 const ffmpeg = new FFmpeg()
